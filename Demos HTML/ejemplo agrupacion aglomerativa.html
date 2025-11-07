@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador de Agrupamiento Aglomerativo (Automático)</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .controls {
+            margin-bottom: 20px;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .controls label, .controls select, .controls input {
+            font-weight: bold;
+        }
+        .controls input[type="number"], .controls select {
+            width: 80px;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .controls select {
+            width: 120px;
+        }
+        .controls button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        .controls button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #generateBtn { background-color: #36A2EB; color: white; }
+        #toggleAnimationBtn { background-color: #4BC0C0; color: white; width: 120px; }
+        #resetBtn { background-color: #FF6384; color: white; }
+        .speed-control { display: flex; align-items: center; gap: 5px; }
+        canvas {
+            border: 2px solid #333;
+            background-color: #fff;
+            border-radius: 8px;
+        }
+        #status {
+            margin-top: 15px;
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #555;
+            height: 25px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Visualizador de Agrupamiento Aglomerativo (Automático)</h1>
+
+    <div class="controls">
+        <label for="numPoints">Puntos:</label>
+        <input type="number" id="numPoints" value="70" min="10" max="200">
+        <button id="generateBtn">Generar Datos</button>
+
+        <label for="linkageMethod">Método:</label>
+        <select id="linkageMethod">
+            <option value="single">Single</option>
+            <option value="complete">Complete</option>
+            <option value="average">Average</option>
+            <option value="ward">Ward</option>
+        </select>
+
+        <div class="speed-control">
+            <label for="speedRange">Velocidad:</label>
+            <input type="range" id="speedRange" min="50" max="1000" value="700" step="50" style="direction: rtl;">
+        </div>
+
+        <button id="toggleAnimationBtn" disabled>Iniciar</button>
+        <button id="resetBtn">Reiniciar</button>
+    </div>
+
+    <div id="status">Genera los datos para comenzar.</div>
+
+    <canvas id="mainCanvas" width="800" height="600"></canvas>
+
+    <script>
+        // --- Setup ---
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const controls = {
+            numPoints: document.getElementById('numPoints'),
+            linkageMethod: document.getElementById('linkageMethod'),
+            generateBtn: document.getElementById('generateBtn'),
+            toggleAnimationBtn: document.getElementById('toggleAnimationBtn'),
+            resetBtn: document.getElementById('resetBtn'),
+            speedRange: document.getElementById('speedRange'),
+            status: document.getElementById('status'),
+        };
+
+        let points = [];
+        let clusters = [];
+        let isRunning = false; // El algoritmo ha comenzado
+        let isAnimating = false; // La animación está activa (no pausada)
+        let step = 0;
+        let totalSteps = 0;
+        let animationTimeoutId;
+        const COLORS = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#E7E9ED', '#8A2BE2', '#7FFF00', '#D2691E', '#FF0000', '#00FF00', '#0000FF'];
+
+        // --- Utilidades Matemáticas ---
+        const distanceSquared = (p1, p2) => (p1.x - p2.x)**2 + (p1.y - p2.y)**2;
+        const calculateCentroid = (pts) => {
+            const sum = pts.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+            return { x: sum.x / pts.length, y: sum.y / pts.length };
+        };
+
+        // --- Lógica del Algoritmo ---
+        function getClusterDistance(c1, c2, method) {
+            // (Esta función es idéntica a la versión anterior)
+            switch (method) {
+                case 'single': {
+                    let min_dist = Infinity;
+                    c1.points.forEach(p1 => c2.points.forEach(p2 => { min_dist = Math.min(min_dist, distanceSquared(p1, p2)); }));
+                    return min_dist;
+                }
+                case 'complete': {
+                    let max_dist = 0;
+                    c1.points.forEach(p1 => c2.points.forEach(p2 => { max_dist = Math.max(max_dist, distanceSquared(p1, p2)); }));
+                    return max_dist;
+                }
+                case 'average': {
+                    let total_dist = 0;
+                    c1.points.forEach(p1 => c2.points.forEach(p2 => { total_dist += Math.sqrt(distanceSquared(p1, p2)); }));
+                    return total_dist / (c1.points.length * c2.points.length);
+                }
+                case 'ward': {
+                    const n1 = c1.points.length;
+                    const n2 = c2.points.length;
+                    return (n1 * n2 / (n1 + n2)) * distanceSquared(c1.centroid, c2.centroid);
+                }
+            }
+        }
+
+        function findClosestClusters() {
+            let minDistance = Infinity;
+            let closestPair = [-1, -1];
+            for (let i = 0; i < clusters.length; i++) {
+                for (let j = i + 1; j < clusters.length; j++) {
+                    const dist = getClusterDistance(clusters[i], clusters[j], controls.linkageMethod.value);
+                    if (dist < minDistance) {
+                        minDistance = dist;
+                        closestPair = [i, j];
+                    }
+                }
+            }
+            return closestPair;
+        }
+
+        // --- Control de la Animación y el Estado ---
+        function animationStep() {
+            if (!isAnimating) return; // Si está pausado, no hacer nada.
+
+            // Condición de parada
+            if (clusters.length <= 1) {
+                controls.status.textContent = `¡Proceso completado en ${step} pasos!`;
+                isAnimating = false;
+                isRunning = false;
+                setControlsState(true); // Habilitar controles
+                controls.toggleAnimationBtn.textContent = 'Iniciar';
+                controls.toggleAnimationBtn.disabled = true;
+                return;
+            }
+
+            // 1. Encontrar el par más cercano
+            const [idx1, idx2] = findClosestClusters();
+
+            // 2. Fusionar los clusters
+            const cluster1 = clusters[idx1];
+            const cluster2 = clusters[idx2];
+            const newPoints = [...cluster1.points, ...cluster2.points];
+            const newCluster = {
+                id: clusters.length + step,
+                points: newPoints,
+                color: cluster1.color,
+                centroid: calculateCentroid(newPoints)
+            };
+
+            // 3. Actualizar la lista de clusters
+            clusters = clusters.filter((_, index) => index !== idx1 && index !== idx2);
+            clusters.push(newCluster);
+
+            step++;
+            updateStatus();
+            render();
+
+            // 4. Programar el siguiente paso
+            const delay = 1050 - parseInt(controls.speedRange.value);
+            animationTimeoutId = setTimeout(animationStep, delay);
+        }
+
+        function toggleAnimation() {
+            if (!isRunning) {
+                // Iniciar por primera vez
+                isRunning = true;
+                isAnimating = true;
+                step = 0;
+                clusters = points.map((p, i) => ({
+                    id: i, points: [p], color: COLORS[i % COLORS.length], centroid: p
+                }));
+                render();
+                setControlsState(false); // Deshabilitar controles
+                controls.toggleAnimationBtn.textContent = 'Pausar';
+                animationStep();
+            } else {
+                // Pausar o Reanudar
+                isAnimating = !isAnimating;
+                if (isAnimating) {
+                    controls.toggleAnimationBtn.textContent = 'Pausar';
+                    controls.status.textContent = `Reanudado. Paso ${step}/${totalSteps}...`;
+                    animationStep(); // Reiniciar el bucle
+                } else {
+                    controls.toggleAnimationBtn.textContent = 'Reanudar';
+                    controls.status.textContent = `Pausado en el paso ${step}.`;
+                    clearTimeout(animationTimeoutId);
+                }
+            }
+        }
+
+        function generateData() {
+            resetState();
+            const numPoints = parseInt(controls.numPoints.value);
+            points = [];
+            for (let i = 0; i < numPoints; i++) {
+                points.push({
+                    x: Math.random() * (canvas.width - 40) + 20,
+                    y: Math.random() * (canvas.height - 40) + 20
+                });
+            }
+            totalSteps = numPoints - 1;
+            controls.toggleAnimationBtn.disabled = false;
+            controls.status.textContent = `Datos generados (${numPoints} puntos). Listo para iniciar.`;
+            render();
+        }
+
+        function resetState() {
+            clearTimeout(animationTimeoutId);
+            isRunning = false;
+            isAnimating = false;
+            points = [];
+            clusters = [];
+            step = 0;
+            totalSteps = 0;
+            setControlsState(true);
+            controls.toggleAnimationBtn.textContent = 'Iniciar';
+            controls.toggleAnimationBtn.disabled = true;
+            controls.status.textContent = 'Genera los datos para comenzar.';
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function setControlsState(enabled) {
+            controls.generateBtn.disabled = !enabled;
+            controls.numPoints.disabled = !enabled;
+            controls.linkageMethod.disabled = !enabled;
+        }
+
+        function updateStatus() {
+            controls.status.textContent = `Paso ${step}/${totalSteps} | Clusters restantes: ${clusters.length}`;
+        }
+
+        // --- Funciones de Dibujo ---
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (!isRunning) {
+                points.forEach(p => drawPoint(p, '#888'));
+                return;
+            }
+
+            clusters.forEach(c => {
+                c.points.forEach(p => drawPoint(p, c.color));
+            });
+        }
+
+        const drawPoint = (p, color) => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+        };
+
+        // --- Event Listeners ---
+        controls.generateBtn.addEventListener('click', generateData);
+        controls.toggleAnimationBtn.addEventListener('click', toggleAnimation);
+        controls.resetBtn.addEventListener('click', resetState);
+
+        window.onload = generateData;
+    </script>
+</body>
+</html>
