@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualización del Algoritmo DBSCAN</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Visualización del Algoritmo DBSCAN</h1>
+    <div id="controls">
+        <div class="control-group">
+            <label for="eps">Epsilon (eps): <span id="eps-value">50</span></label>
+            <input type="range" id="eps" min="10" max="150" value="50">
+        </div>
+        <div class="control-group">
+            <label for="minPts">Min. Puntos (minPts): <span id="minPts-value">5</span></label>
+            <input type="range" id="minPts" min="2" max="20" value="5">
+        </div>
+        <div class="control-group">
+            <label for="speed">Velocidad (ms por paso): <span id="speed-value">100</span></label>
+            <input type="range" id="speed" min="10" max="1000" value="100">
+        </div>
+        <div class="button-group">
+            <button id="startBtn">Iniciar / Reiniciar</button>
+            <button id="pauseBtn" disabled>Pausar</button>
+        </div>
+    </div>
+    <div id="canvas-container">
+        <canvas id="dbscanCanvas" width="800" height="500"></canvas>
+        <div id="status">Presiona 'Iniciar' para comenzar la simulación.</div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

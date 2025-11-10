@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador del Algoritmo K-means</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .controls {
+            margin-bottom: 20px;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        .controls label {
+            font-weight: bold;
+        }
+        .controls input[type="number"] {
+            width: 60px;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .controls button {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+        #generateBtn {
+            background-color: #36A2EB;
+            color: white;
+        }
+        #generateBtn:hover {
+            background-color: #2b8ac9;
+        }
+        #runBtn {
+            background-color: #4BC0C0;
+            color: white;
+        }
+        #runBtn:hover {
+            background-color: #3a9b9b;
+        }
+        #runBtn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #resetBtn {
+            background-color: #FF6384;
+            color: white;
+        }
+        #resetBtn:hover {
+            background-color: #e65574;
+        }
+        canvas {
+            border: 2px solid #333;
+            background-color: #fff;
+            border-radius: 8px;
+        }
+        #status {
+            margin-top: 15px;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #555;
+            height: 25px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Visualizador del Algoritmo K-means</h1>
+
+    <div class="controls">
+        <label for="numPoints">Puntos:</label>
+        <input type="number" id="numPoints" value="200" min="10" max="1000">
+
+        <label for="numClusters">Clusters (K):</label>
+        <input type="number" id="numClusters" value="4" min="2" max="10">
+
+        <button id="generateBtn">Generar Nuevos Datos</button>
+        <button id="runBtn" disabled>Ejecutar K-means</button>
+        <button id="resetBtn">Reiniciar</button>
+    </div>
+
+    <div id="status">Genera los datos para comenzar.</div>
+
+    <canvas id="kmeansCanvas" width="800" height="600"></canvas>
+
+    <script>
+        const canvas = document.getElementById('kmeansCanvas');
+        const ctx = canvas.getContext('2d');
+        const numPointsInput = document.getElementById('numPoints');
+        const numClustersInput = document.getElementById('numClusters');
+        const generateBtn = document.getElementById('generateBtn');
+        const runBtn = document.getElementById('runBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const statusDiv = document.getElementById('status');
+
+        let points = [];
+        let centroids = [];
+        let clusterAssignments = [];
+        let k;
+        let isRunning = false;
+        let timeoutId;
+
+        // Paleta de colores para los clusters
+        const COLORS = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#E7E9ED', '#8A2BE2', '#7FFF00', '#D2691E'];
+
+        // --- Funciones de Dibujo ---
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function drawPoint(point, color) {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+        }
+
+        function drawCentroid(centroid, color) {
+            ctx.beginPath();
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = color;
+            ctx.moveTo(centroid.x - 10, centroid.y - 10);
+            ctx.lineTo(centroid.x + 10, centroid.y + 10);
+            ctx.moveTo(centroid.x + 10, centroid.y - 10);
+            ctx.lineTo(centroid.x - 10, centroid.y + 10);
+            ctx.stroke();
+        }
+
+        function render() {
+            clearCanvas();
+            // Dibuja los puntos con el color de su cluster asignado
+            for (let i = 0; i < points.length; i++) {
+                const clusterIndex = clusterAssignments[i];
+                const color = clusterIndex === undefined ? '#000000' : COLORS[clusterIndex % COLORS.length];
+                drawPoint(points[i], color);
+            }
+            // Dibuja los centroides
+            for (let i = 0; i < centroids.length; i++) {
+                drawCentroid(centroids[i], COLORS[i % COLORS.length]);
+            }
+        }
+
+        // --- Lógica del Algoritmo K-means ---
+
+        function generateData() {
+            reset(false); // Reinicia sin limpiar el lienzo para ver los datos nuevos
+            const numPoints = parseInt(numPointsInput.value);
+            points = [];
+            for (let i = 0; i < numPoints; i++) {
+                points.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height
+                });
+            }
+            runBtn.disabled = false;
+            statusDiv.textContent = "Datos generados. Listo para ejecutar K-means.";
+            render();
+        }
+
+        function initializeCentroids() {
+            centroids = [];
+            const pointsCopy = [...points];
+            // K-means++: Selecciona centroides iniciales que estén alejados entre sí
+            // 1. Elige el primer centroide al azar
+            let firstIndex = Math.floor(Math.random() * pointsCopy.length);
+            centroids.push(pointsCopy.splice(firstIndex, 1)[0]);
+
+            // 2. Elige los siguientes k-1 centroides
+            for (let i = 1; i < k; i++) {
+                let distances = [];
+                let totalDistance = 0;
+                // Calcula la distancia mínima de cada punto al centroide más cercano
+                for (const point of pointsCopy) {
+                    let minDistance = Infinity;
+                    for (const centroid of centroids) {
+                        const dist = distanceSquared(point, centroid);
+                        if (dist < minDistance) {
+                            minDistance = dist;
+                        }
+                    }
+                    distances.push(minDistance);
+                    totalDistance += minDistance;
+                }
+                // Elige el siguiente centroide con una probabilidad proporcional a su distancia al cuadrado
+                const randomVal = Math.random() * totalDistance;
+                let cumulativeDistance = 0;
+                let nextCentroidIndex = -1;
+                for (let j = 0; j < pointsCopy.length; j++) {
+                    cumulativeDistance += distances[j];
+                    if (cumulativeDistance >= randomVal) {
+                        nextCentroidIndex = j;
+                        break;
+                    }
+                }
+                centroids.push(pointsCopy.splice(nextCentroidIndex, 1)[0]);
+            }
+        }
+
+        function distanceSquared(p1, p2) {
+            const dx = p1.x - p2.x;
+            const dy = p1.y - p2.y;
+            return dx * dx + dy * dy; // Más eficiente que calcular la raíz cuadrada
+        }
+
+        // Paso E (Expectation): Asigna cada punto al centroide más cercano
+        function assignPointsToClusters() {
+            let changed = false;
+            for (let i = 0; i < points.length; i++) {
+                let minDistance = Infinity;
+                let closestCentroidIndex = -1;
+                for (let j = 0; j < centroids.length; j++) {
+                    const dist = distanceSquared(points[i], centroids[j]);
+                    if (dist < minDistance) {
+                        minDistance = dist;
+                        closestCentroidIndex = j;
+                    }
+                }
+                if (clusterAssignments[i] !== closestCentroidIndex) {
+                    changed = true;
+                }
+                clusterAssignments[i] = closestCentroidIndex;
+            }
+            return changed;
+        }
+
+        // Paso M (Maximization): Actualiza la posición de los centroides
+        function updateCentroids() {
+            const sums = Array.from({ length: k }, () => ({ x: 0, y: 0 }));
+            const counts = Array(k).fill(0);
+
+            for (let i = 0; i < points.length; i++) {
+                const clusterIndex = clusterAssignments[i];
+                sums[clusterIndex].x += points[i].x;
+                sums[clusterIndex].y += points[i].y;
+                counts[clusterIndex]++;
+            }
+
+            for (let i = 0; i < k; i++) {
+                if (counts[i] > 0) {
+                    centroids[i] = {
+                        x: sums[i].x / counts[i],
+                        y: sums[i].y / counts[i]
+                    };
+                }
+            }
+        }
+
+        // --- Control del Flujo de la Aplicación ---
+
+        let iteration = 0;
+        function runKMeansStep() {
+            if (!isRunning) return;
+
+            iteration++;
+            statusDiv.textContent = `Iteración ${iteration}: Asignando puntos...`;
+
+            // Paso de Asignación
+            const assignmentsChanged = assignPointsToClusters();
+            render();
+
+            if (!assignmentsChanged) {
+                statusDiv.textContent = `¡Convergencia alcanzada en la iteración ${iteration}!`;
+                isRunning = false;
+                runBtn.disabled = false;
+                generateBtn.disabled = false;
+                resetBtn.disabled = false;
+                return;
+            }
+
+            // Pausa para visualizar la asignación antes de mover los centroides
+            timeoutId = setTimeout(() => {
+                statusDiv.textContent = `Iteración ${iteration}: Actualizando centroides...`;
+
+                // Paso de Actualización
+                updateCentroids();
+                render();
+
+                // Programa la siguiente iteración
+                timeoutId = setTimeout(runKMeansStep, 1000);
+            }, 700);
+        }
+
+        function startKMeans() {
+            if (isRunning || points.length === 0) return;
+
+            k = parseInt(numClustersInput.value);
+            if (k > points.length) {
+                alert("El número de clusters (K) no puede ser mayor que el número de puntos.");
+                return;
+            }
+
+            isRunning = true;
+            iteration = 0;
+            runBtn.disabled = true;
+            generateBtn.disabled = true;
+            resetBtn.disabled = true;
+
+            initializeCentroids();
+            clusterAssignments = [];
+
+            render();
+
+            statusDiv.textContent = "Inicializando centroides...";
+            timeoutId = setTimeout(runKMeansStep, 1000); // Inicia el ciclo de iteraciones
+        }
+
+        function reset(clear = true) {
+            isRunning = false;
+            clearTimeout(timeoutId);
+            points = [];
+            centroids = [];
+            clusterAssignments = [];
+            runBtn.disabled = true;
+            generateBtn.disabled = false;
+            resetBtn.disabled = false;
+            statusDiv.textContent = "Genera los datos para comenzar.";
+            if (clear) {
+                clearCanvas();
+            }
+        }
+
+        // Event Listeners
+        generateBtn.addEventListener('click', generateData);
+        runBtn.addEventListener('click', startKMeans);
+        resetBtn.addEventListener('click', () => reset(true));
+
+        // Iniciar con datos aleatorios
+        window.onload = generateData;
+    </script>
+
+</body>
+</html>
